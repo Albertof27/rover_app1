@@ -34,8 +34,13 @@ class MyApp extends ConsumerWidget {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (user != null) {
           await AppServices.I.initForUser(user.uid);
+          ref.invalidate(tripsStreamProvider);
+          ref.invalidate(totalDistanceKmProvider);
+
         } else {
           await AppServices.I.clearForSignOut();
+          ref.invalidate(tripsStreamProvider);
+          ref.invalidate(totalDistanceKmProvider);
         }
       });
     });
@@ -49,12 +54,12 @@ class MyApp extends ConsumerWidget {
       ),
       // Display login screen or home depending on auth state
       home: auth.when(
-        data: (user) => user == null ? LoginScreen() : RoverHome(),
+        data: (user) => user == null ? const LoginScreen() : const RoverHome(),
         loading: () => const Scaffold(
           body: Center(child: CircularProgressIndicator()),
         ),
         error: (err, _) => Scaffold(
-          body: Center(child: Text('Auth error: $err')),
+          body: Center(child: Text('Auth error: ${err.toString()}')),
         ),
       ),
     );

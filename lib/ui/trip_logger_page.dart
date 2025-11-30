@@ -31,6 +31,41 @@ final isRecordingProvider = StateProvider<bool>((ref) => AppServices.I.recorder.
 // -------------------------------------------
 
 
+Future<String?> _askTripNameDialog(BuildContext context) async {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: const Text('Name your trip'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Trip name',
+            hintText: 'e.g. Airport run, Walk to class',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop(null); // user canceled
+            },
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop(controller.text.trim());
+            },
+            child: const Text('Start'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+
 class TripLoggerPage extends ConsumerWidget {
   const TripLoggerPage({super.key});
 
@@ -192,6 +227,42 @@ class TripLoggerPage extends ConsumerWidget {
 
   // --- Helper Methods ---
 
+Future<void> _startRecording(BuildContext context, WidgetRef ref) async {
+  // 1) Ask user for a custom name
+  final inputName = await _askTripNameDialog(context);
+
+  // If user cancelled the dialog, do nothing
+  if (inputName == null) {
+    return;
+  }
+
+  // 2) Fallback default name if they left it blank
+  final name = inputName.isEmpty
+      ? "Trip ${DateTime.now().toLocal().toString().substring(0, 19)}"
+      : inputName;
+
+  // 3) Call recorder with that name
+  final id = await AppServices.I.recorder.start(name);
+
+  if (id == null) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Location permission/service required.")),
+    );
+    return;
+  }
+
+  // 4) Mark as recording in state
+  ref.read(isRecordingProvider.notifier).state = true;
+
+  // 5) Select the new active trip
+  ref.read(selectedTripIdProvider.notifier).state = id;
+
+}
+
+
+
+/*
   Future<void> _startRecording(BuildContext context, WidgetRef ref) async {
     // 1. Refresh recording status
     ref.read(isRecordingProvider.notifier).state = true;
@@ -213,6 +284,7 @@ class TripLoggerPage extends ConsumerWidget {
     // 3. Select the new active trip
     ref.read(selectedTripIdProvider.notifier).state = id;
   }
+  */
 
   Future<void> _stopRecording(BuildContext context, WidgetRef ref) async {
     await AppServices.I.recorder.stop();
