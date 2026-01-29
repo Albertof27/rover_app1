@@ -1,45 +1,81 @@
-#include <gpiod.h>
+#include <gpiod.hpp>
 #include <chrono>
 #include <thread>
 #include <iostream>
 
-#define CHIPNAME "gpiochip0"
-#define TRIG 23
-#define ECHO 24
+static constexpr const char* CHIP = "/dev/gpiochip0";
+static constexpr int TRIG = 23; // BCM GPIO23
+static constexpr int ECHO = 24; // BCM GPIO24
+
+// Busy-wait helper (simple + works fine for testing)
+static inline void sleep_us(int us) {
+    std::this_thread::sleep_for(std::chrono::microseconds(us));
+}
 
 int main() {
-    gpiod_chip *chip = gpiod_chip_open_by_name(CHIPNAME);
-    gpiod_line *trig = gpiod_chip_get_line(chip, TRIG);
-    gpiod_line *echo = gpiod_chip_get_line(chip, ECHO);
+    try {
+        gpiod::chip chip(CHIP);
 
-    gpiod_line_request_output(trig, "trig", 0);
-    gpiod_line_request_input(echo, "echo");
+        // Get GPIO lines
+        gpiod::line trig = chip.get_line(TRIG);
+        gpiod::line echo = chip.get_line(ECHO);
 
-    while (true) {
-        // Send 10us pulse
-        gpiod_line_set_value(trig, 1);
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-        gpiod_line_set_value(trig, 0);
+        // Request TRIG as output, start low
+        trig.request(
+            {"hcsr04-trig", gpiod::line_request::DIRECTION_OUTPUT, 0},
+            0
+        );
 
-        // Wait for echo HIGH
-        while (gpiod_line_get_value(echo) == 0);
+        // Request ECHO as input
+        echo.request(
+            {"hcsr04-echo", gpiod::line_request::DIRECTION_INPUT, 0}
+        );
 
-        auto start = std::chrono::high_resolution_clock::now();
+        while (true) {
+            // Ensure trig low
+            trig.set_value(0);
+            sleep_us(2);
 
-        // Wait for echo LOW
-        while (gpiod_line_get_value(echo) == 1);
+            // 10us trigger pulse
+            trig.set_value(1);
+            sleep_us(10);
+            trig.set_value(0);
 
-        auto end = std::chrono::high_resolution_clock::now();
+            // Wait for echo HIGH (timeout)
+            auto t0 = std::chrono::high_resolution_clock::now();
+            while (echo.get_value() == 0) {
+                auto now = std::chrono::high_resolution_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count() > 30) {
+                    std::cout << "Timeout waiting for echo HIGH\n";
+                    goto pause_and_continue;
+                }
+            }
 
-        std::chrono::duration<double> elapsed = end - start;
+            // Measure HIGH pulse width
+            auto start = std::chrono::high_resolution_clock::now();
+            while (echo.get_value() == 1) {
+                auto now = std::chrono::high_resolution_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() > 30) {
+                    std::cout << "Timeout waiting for echo LOW\n";
+                    goto pause_and_continue;
+                }
+            }
+            auto end = std::chrono::high_resolution_clock::now();
 
-        double distance_cm = elapsed.count() * 34300 / 2;
+            auto pulse_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-        std::cout << "Distance: " << distance_cm << " cm" << std::endl;
+            // distance(cm) = (time_us * 0.0343) / 2
+            double distance_cm = (pulse_us * 0.0343) / 2.0;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::cout << "Distance: " << distance_cm << " cm\n";
+
+        pause_and_continue:
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "GPIO error: " << e.what() << "\n";
+        return 1;
     }
-
-    gpiod_chip_close(chip);
-    return 0;
 }
+
