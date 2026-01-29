@@ -12,63 +12,72 @@ static inline void sleep_us(int us) {
 }
 
 int main() {
+    // Open chip
     gpiod_chip *chip = gpiod_chip_open(CHIP);
-    if (!chip) {
-        std::cerr << "Failed to open gpiochip\n";
-        return 1;
-    }
 
-    gpiod_line *trig = gpiod_chip_get_line(chip, TRIG);
-    gpiod_line *echo = gpiod_chip_get_line(chip, ECHO);
+    // Configure TRIG as output
+    gpiod_line_settings *trig_settings = gpiod_line_settings_new();
+    gpiod_line_settings_set_direction(trig_settings, GPIOD_LINE_DIRECTION_OUTPUT);
 
-    if (!trig || !echo) {
-        std::cerr << "Failed to get GPIO lines\n";
-        return 1;
-    }
+    gpiod_line_config *trig_config = gpiod_line_config_new();
+    gpiod_line_config_add_line_settings(trig_config, (unsigned int[]){TRIG}, 1, trig_settings);
 
-    // Request TRIG as output
-    if (gpiod_line_request_output(trig, "trig", 0) < 0) {
-        std::cerr << "Failed to request TRIG as output\n";
-        return 1;
-    }
+    gpiod_request_config *req_cfg = gpiod_request_config_new();
+    gpiod_request_config_set_consumer(req_cfg, "hcsr04");
 
-    // Request ECHO as input
-    if (gpiod_line_request_input(echo, "echo") < 0) {
-        std::cerr << "Failed to request ECHO as input\n";
-        return 1;
-    }
+    gpiod_line_request *trig_req =
+        gpiod_chip_request_lines(chip, req_cfg, trig_config);
+
+    // Configure ECHO as input
+    gpiod_line_settings *echo_settings = gpiod_line_settings_new();
+    gpiod_line_settings_set_direction(echo_settings, GPIOD_LINE_DIRECTION_INPUT);
+
+    gpiod_line_config *echo_config = gpiod_line_config_new();
+    gpiod_line_config_add_line_settings(echo_config, (unsigned int[]){ECHO}, 1, echo_settings);
+
+    gpiod_line_request *echo_req =
+        gpiod_chip_request_lines(chip, req_cfg, echo_config);
 
     while (true) {
-        // Trigger pulse
-        gpiod_line_set_value(trig, 1);
+        // 10us trigger pulse
+        gpiod_line_request_set_value(trig_req, TRIG, 1);
         sleep_us(10);
-        gpiod_line_set_value(trig, 0);
+        gpiod_line_request_set_value(trig_req, TRIG, 0);
 
         // Wait for echo HIGH
-        auto timeout_start = std::chrono::high_resolution_clock::now();
-        while (gpiod_line_get_value(echo) == 0) {
+        int val = 0;
+        auto t0 = std::chrono::high_resolution_clock::now();
+        while (val == 0) {
+            gpiod_line_request_get_value(echo_req, ECHO, &val);
             auto now = std::chrono::high_resolution_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - timeout_start).count() > 30) {
-                std::cout << "Timeout waiting for echo HIGH\n";
-                goto wait_and_repeat;
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count() > 30) {
+                std::cout << "Timeout\n";
+                goto delay;
             }
         }
 
         auto start = std::chrono::high_resolution_clock::now();
 
         // Wait for echo LOW
-        while (gpiod_line_get_value(echo) == 1);
+        while (val == 1) {
+            gpiod_line_request_get_value(echo_req, ECHO, &val);
+        }
 
         auto end = std::chrono::high_resolution_clock::now();
 
-        auto pulse_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-        double distance_cm = (pulse_us * 0.0343) / 2.0;
+        auto pulse_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
+        double distance_cm = (pulse_us * 0.0343) / 2.0;
         std::cout << "Distance: " << distance_cm << " cm\n";
 
-    wait_and_repeat:
+    delay:
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
+
+    return 0;
+}
+
 
     gpiod_chip_close(chip);
     return 0;
