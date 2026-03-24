@@ -103,6 +103,8 @@ US_ECHO_PINS = {
     "back": 22,
 }
 
+US_POLL_SEQUENCE = ["front", "left", "front", "right", "front", "back"]
+
 US_MIN_M = 0.02
 US_MAX_M = 4.00
 US_INTER_SENSOR_DELAY_S = 0.03
@@ -320,13 +322,18 @@ def low_pass_filter(new_value, old_value, alpha=US_FILTER_ALPHA):
         return new_value
     return (alpha * new_value) + ((1.0 - alpha) * old_value)
 
+def low_pass_filter_for_sensor(name, new_value, old_value):
+    alpha = 0.70 if name == "front" else US_FILTER_ALPHA
+    return low_pass_filter(new_value, old_value, alpha)
+
 def ultrasonic_thread():
     global ultra_last_update_s
 
     while True:
         cycle_values = {}
 
-        for name, echo_pin in US_ECHO_PINS.items():
+        for name in US_POLL_SEQUENCE:
+            echo_pin = US_ECHO_PINS[name]
             try:
                 trigger_pulse()
                 dist_m = read_echo_distance_m(echo_pin)
@@ -340,7 +347,7 @@ def ultrasonic_thread():
         if cycle_values:
             with ultra_lock:
                 for name, dist_m in cycle_values.items():
-                    ultra[name] = low_pass_filter(dist_m, ultra.get(name, float("nan")))
+                   ultra[name] = low_pass_filter_for_sensor(name, dist_m, ultra.get(name, float("nan")))
                 ultra_last_update_s = time.time()
 
         time.sleep(US_LOOP_DELAY_S)
